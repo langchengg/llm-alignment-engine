@@ -165,8 +165,8 @@ class SFTFineTuner:
         dataset = self.setup_dataset()
         train_cfg = self.config["training"]
 
-        # Training arguments
-        training_args = SFTConfig(
+        # Build base training arguments (standard TrainingArguments params)
+        base_kwargs = dict(
             output_dir=train_cfg["output_dir"],
             num_train_epochs=train_cfg["num_train_epochs"],
             per_device_train_batch_size=train_cfg["per_device_train_batch_size"],
@@ -175,7 +175,6 @@ class SFTFineTuner:
             lr_scheduler_type=train_cfg["lr_scheduler_type"],
             warmup_ratio=train_cfg["warmup_ratio"],
             weight_decay=train_cfg["weight_decay"],
-            max_seq_length=train_cfg["max_seq_length"],
             logging_steps=train_cfg["logging_steps"],
             save_steps=train_cfg["save_steps"],
             save_total_limit=train_cfg["save_total_limit"],
@@ -183,18 +182,29 @@ class SFTFineTuner:
             gradient_checkpointing=train_cfg.get("gradient_checkpointing", True),
             optim=train_cfg.get("optim", "paged_adamw_32bit"),
             report_to=train_cfg.get("report_to", "none"),
-            # DeepSpeed
             deepspeed=self.config.get("deepspeed_config"),
-            # Evaluation
             eval_strategy="steps",
             eval_steps=train_cfg.get("save_steps", 200),
             load_best_model_at_end=True,
             metric_for_best_model="eval_loss",
             greater_is_better=False,
-            # Dataset — SFTTrainer handles tokenization from "text" column
+        )
+
+        # SFT-specific params — may live in SFTConfig or SFTTrainer depending on TRL version
+        sft_specific = dict(
+            max_seq_length=train_cfg.get("max_seq_length", 1024),
             dataset_text_field="text",
             packing=train_cfg.get("packing", False),
         )
+
+        # Try adding SFT-specific params to SFTConfig; if rejected, pass to SFTTrainer
+        trainer_extra_kwargs = {}
+        try:
+            training_args = SFTConfig(**base_kwargs, **sft_specific)
+        except TypeError as e:
+            logger.warning(f"SFTConfig rejected some params ({e}), passing to SFTTrainer instead")
+            training_args = SFTConfig(**base_kwargs)
+            trainer_extra_kwargs = sft_specific
 
         # Initialize trainer
         self.trainer = SFTTrainer(
@@ -204,6 +214,7 @@ class SFTFineTuner:
             eval_dataset=dataset["validation"],
             tokenizer=self.tokenizer,
             peft_config=self.peft_config,
+            **trainer_extra_kwargs,
         )
 
         logger.info("Starting SFT training...")
