@@ -8,7 +8,7 @@ model:
   name_or_path: "Qwen/Qwen2.5-1.5B-Instruct"  # or path to SFT checkpoint
   sft_checkpoint: "./outputs/sft/final"          # load SFT model as base
   torch_dtype: "bfloat16"
-  attn_implementation: "flash_attention_2"
+  attn_implementation: null  # auto-select (sdpa if available, else eager)
 
 # QLoRA Configuration
 qlora:

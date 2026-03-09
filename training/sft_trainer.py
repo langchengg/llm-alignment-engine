@@ -75,14 +75,18 @@ class SFTFineTuner:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
         # Load model with quantization
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_name,
+        model_kwargs = dict(
             quantization_config=bnb_config,
             device_map="auto",
             trust_remote_code=True,
             torch_dtype=getattr(torch, self.config["model"].get("torch_dtype", "bfloat16")),
-            attn_implementation=self.config["model"].get("attn_implementation", None),
         )
+        # Only set attn_implementation if explicitly configured (avoids flash_attn errors)
+        attn_impl = self.config["model"].get("attn_implementation")
+        if attn_impl:
+            model_kwargs["attn_implementation"] = attn_impl
+
+        self.model = AutoModelForCausalLM.from_pretrained(model_name, **model_kwargs)
 
         # Prepare model for k-bit training
         self.model = prepare_model_for_kbit_training(
