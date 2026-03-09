@@ -136,7 +136,7 @@ git clone https://github.com/yourusername/llm-alignment-engine.git
 cd llm-alignment-engine
 
 # Install
-pip install -e .
+pip install -r requirements.txt
 
 # Run full pipeline
 chmod +x scripts/run_full_pipeline.sh
