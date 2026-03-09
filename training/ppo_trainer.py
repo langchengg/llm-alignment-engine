@@ -3,7 +3,7 @@ PPO Trainer — Proximal Policy Optimization with QLoRA + Reward Model
 
 Stage 2b of the alignment pipeline (alternative to DPO):
 - RLHF-style training with online reward model feedback
-- Uses TRL PPOTrainer with adaptive KL penalty
+- Uses TRL OnlineDPOTrainer (TRL >= 0.12) or legacy PPOTrainer
 - More compute-intensive than DPO but supports online learning
 - Demonstrates understanding of full RLHF pipeline
 
@@ -11,6 +11,10 @@ Architecture:
   Policy Model (QLoRA) ──> Generate response ──> Reward Model ──> Score
        ↑                                                          |
        └─────────── PPO update (maximize reward - KL penalty) ────┘
+
+Compatibility:
+  - TRL >= 0.12: Uses OnlineDPOTrainer (PPOTrainer was removed)
+  - TRL < 0.12:  Uses legacy PPOTrainer + PPOConfig
 """
 
 import os
@@ -26,13 +30,33 @@ from transformers import (
     AutoTokenizer,
     BitsAndBytesConfig,
     pipeline,
+    GenerationConfig,
 )
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training, TaskType
-from trl import PPOTrainer, PPOConfig, AutoModelForCausalLMWithValueHead
 from tqdm import tqdm
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# ============================================================
+# Version-adaptive imports for TRL
+# ============================================================
+TRL_VERSION = "new"
+try:
+    # TRL >= 0.12: PPOTrainer removed, use OnlineDPOTrainer
+    from trl import OnlineDPOTrainer, OnlineDPOConfig
+    logger.info("Using TRL >= 0.12 (OnlineDPOTrainer)")
+except ImportError:
+    try:
+        # TRL < 0.12: Legacy PPOTrainer
+        from trl import PPOTrainer, PPOConfig, AutoModelForCausalLMWithValueHead
+        TRL_VERSION = "legacy"
+        logger.info("Using TRL < 0.12 (legacy PPOTrainer)")
+    except ImportError:
+        raise ImportError(
+            "Could not import PPO/OnlineDPO from TRL. "
+            "Install TRL: pip install trl>=0.12"
+        )
 
 
 class PPOFineTuner:
@@ -43,6 +67,10 @@ class PPOFineTuner:
     1. Load SFT model as policy
     2. Load reward model for scoring
     3. Generate responses → Score with RM → Update policy with PPO
+
+    Adapts to TRL version:
+    - TRL >= 0.12: Uses OnlineDPOTrainer (reward-model-based online RL)
+    - TRL < 0.12:  Uses legacy PPOTrainer
 
     Usage:
         finetuner = PPOFineTuner("configs/ppo_config.yaml")
@@ -96,7 +124,7 @@ class PPOFineTuner:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
         # LoRA config
-        lora_config = LoraConfig(
+        self.lora_config = LoraConfig(
             r=qlora_cfg["lora_r"],
             lora_alpha=qlora_cfg["lora_alpha"],
             lora_dropout=qlora_cfg["lora_dropout"],
@@ -105,15 +133,26 @@ class PPOFineTuner:
             task_type=TaskType.CAUSAL_LM,
         )
 
-        # Load model with value head for PPO
-        self.model = AutoModelForCausalLMWithValueHead.from_pretrained(
-            base_model,
-            quantization_config=bnb_config,
-            device_map="auto",
-            trust_remote_code=True,
-            torch_dtype=getattr(torch, self.config["model"].get("torch_dtype", "bfloat16")),
-            peft_config=lora_config,
-        )
+        if TRL_VERSION == "new":
+            # TRL >= 0.12: Load as standard causal LM, OnlineDPOTrainer handles the rest
+            self.model = AutoModelForCausalLM.from_pretrained(
+                base_model,
+                quantization_config=bnb_config,
+                device_map="auto",
+                trust_remote_code=True,
+                torch_dtype=getattr(torch, self.config["model"].get("torch_dtype", "bfloat16")),
+            )
+            self.model = prepare_model_for_kbit_training(self.model, use_gradient_checkpointing=True)
+        else:
+            # Legacy TRL: Load with value head
+            self.model = AutoModelForCausalLMWithValueHead.from_pretrained(
+                base_model,
+                quantization_config=bnb_config,
+                device_map="auto",
+                trust_remote_code=True,
+                torch_dtype=getattr(torch, self.config["model"].get("torch_dtype", "bfloat16")),
+                peft_config=self.lora_config,
+            )
 
         # ==================== Reward Model ====================
         rm_cfg = self.config.get("reward_model", {})
@@ -135,12 +174,8 @@ class PPOFineTuner:
             self.reward_pipeline = None
         except Exception as e:
             logger.warning(f"Could not load reward model as classifier: {e}")
-            logger.info("Using sentiment pipeline as fallback reward model")
-            self.reward_pipeline = pipeline(
-                "sentiment-analysis",
-                model="lvwerra/distilbert-imdb",
-                device_map="auto",
-            )
+            logger.info("Using heuristic reward function as fallback")
+            self.reward_pipeline = None
             self.reward_model = None
 
         trainable = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
@@ -161,12 +196,19 @@ class PPOFineTuner:
         logger.info(f"Loading dataset: {dataset_name} [{split}]")
         dataset = load_dataset(dataset_name, "main", split=split)
 
-        # Format queries
-        def format_query(example):
-            query = f"Solve the following math problem step by step:\n\n{example['question']}"
-            return {"query": query}
+        if TRL_VERSION == "new":
+            # OnlineDPOTrainer expects: {"prompt": str}
+            def format_for_online(example):
+                prompt = f"Solve the following math problem step by step:\n\n{example['question']}"
+                return {"prompt": prompt}
+            dataset = dataset.map(format_for_online, remove_columns=dataset.column_names)
+        else:
+            # Legacy PPOTrainer expects: {"query": str}
+            def format_query(example):
+                query = f"Solve the following math problem step by step:\n\n{example['question']}"
+                return {"query": query}
+            dataset = dataset.map(format_query, remove_columns=dataset.column_names)
 
-        dataset = dataset.map(format_query, remove_columns=dataset.column_names)
         return dataset
 
     # ----------------------------------------------------------
@@ -188,15 +230,8 @@ class PPOFineTuner:
 
             with torch.no_grad():
                 outputs = self.reward_model(**inputs)
-                # For sequence classification, logits is the reward
                 reward = outputs.logits.squeeze().item()
             return reward
-
-        elif self.reward_pipeline is not None:
-            # Fallback: use sentiment as proxy reward
-            result = self.reward_pipeline(combined[:512], return_all_scores=False)
-            score = result[0]["score"] if result[0]["label"] == "POSITIVE" else -result[0]["score"]
-            return score
 
         else:
             # Heuristic reward based on response quality
@@ -241,13 +276,63 @@ class PPOFineTuner:
         return reward
 
     # ----------------------------------------------------------
-    # Training
+    # Training (TRL >= 0.12 — OnlineDPOTrainer)
     # ----------------------------------------------------------
-    def train(self):
-        """Run PPO training loop."""
-        if self.model is None:
-            self.setup_models()
+    def _train_new_api(self):
+        """Train using OnlineDPOTrainer (TRL >= 0.12)."""
+        dataset = self.setup_dataset()
+        ppo_cfg = self.config["ppo"]
+        train_cfg = self.config["training"]
 
+        # OnlineDPOConfig maps to the same RLHF concept
+        training_args = OnlineDPOConfig(
+            output_dir=train_cfg["output_dir"],
+            num_train_epochs=train_cfg.get("num_train_epochs", 1),
+            per_device_train_batch_size=ppo_cfg.get("mini_batch_size", 2),
+            gradient_accumulation_steps=ppo_cfg.get("gradient_accumulation_steps", 4),
+            learning_rate=ppo_cfg["learning_rate"],
+            beta=ppo_cfg.get("init_kl_coef", 0.1),  # KL penalty
+            logging_steps=train_cfg.get("logging_steps", 5),
+            save_steps=train_cfg.get("save_steps", 100),
+            save_total_limit=train_cfg.get("save_total_limit", 2),
+            bf16=train_cfg.get("bf16", True),
+            gradient_checkpointing=True,
+            report_to=train_cfg.get("report_to", "none"),
+            max_new_tokens=ppo_cfg.get("response_max_length", 256),
+            remove_unused_columns=False,
+        )
+
+        # Create reward model pipeline for OnlineDPOTrainer
+        if self.reward_model is not None:
+            reward_model = self.reward_model
+            reward_tokenizer = self.reward_tokenizer
+        else:
+            reward_model = None
+            reward_tokenizer = None
+
+        # Initialize OnlineDPO Trainer
+        self.trainer = OnlineDPOTrainer(
+            model=self.model,
+            reward_model=reward_model,
+            args=training_args,
+            train_dataset=dataset,
+            tokenizer=self.tokenizer,
+            peft_config=self.lora_config,
+        )
+
+        logger.info("Starting Online DPO (PPO-style) training...")
+        logger.info(f"  KL coef (beta): {ppo_cfg.get('init_kl_coef', 0.1)}")
+        logger.info(f"  Dataset size: {len(dataset)}")
+
+        train_result = self.trainer.train()
+        logger.info("\nOnline DPO training complete!")
+        return train_result.metrics
+
+    # ----------------------------------------------------------
+    # Training (TRL < 0.12 — Legacy PPOTrainer)
+    # ----------------------------------------------------------
+    def _train_legacy_api(self):
+        """Train using legacy PPOTrainer (TRL < 0.12)."""
         dataset = self.setup_dataset()
         ppo_cfg = self.config["ppo"]
         train_cfg = self.config["training"]
@@ -270,7 +355,7 @@ class PPOFineTuner:
             project_kwargs={"logging_dir": os.path.join(train_cfg["output_dir"], "logs")},
         )
 
-        # Initialize PPO Trainer
+        # Initialize PPO Trainer (legacy)
         self.trainer = PPOTrainer(
             model=self.model,
             config=ppo_config,
@@ -278,13 +363,8 @@ class PPOFineTuner:
             tokenizer=self.tokenizer,
         )
 
-        logger.info("Starting PPO training...")
-        logger.info(f"  Batch size: {ppo_cfg['batch_size']}")
-        logger.info(f"  Init KL coef: {ppo_cfg['init_kl_coef']}")
-        logger.info(f"  PPO epochs: {ppo_cfg['ppo_epochs']}")
-        logger.info(f"  Dataset size: {len(dataset)}")
+        logger.info("Starting PPO training (legacy API)...")
 
-        # Generation kwargs
         gen_kwargs = {
             "max_new_tokens": ppo_cfg.get("response_max_length", 512),
             "temperature": 0.7,
@@ -293,7 +373,6 @@ class PPOFineTuner:
             "pad_token_id": self.tokenizer.pad_token_id,
         }
 
-        # Training loop
         all_stats = []
         for epoch in range(train_cfg.get("num_train_epochs", 1)):
             logger.info(f"\nEpoch {epoch + 1}/{train_cfg.get('num_train_epochs', 1)}")
@@ -304,7 +383,7 @@ class PPOFineTuner:
             )):
                 query_tensors = batch["input_ids"]
 
-                # ---- Step 1: Generate responses ----
+                # Generate responses
                 response_tensors = []
                 for query in query_tensors:
                     response = self.trainer.generate(query, **gen_kwargs)
@@ -317,17 +396,16 @@ class PPOFineTuner:
                     for q, r in zip(query_tensors, response_tensors)
                 ]
 
-                # ---- Step 2: Compute rewards ----
+                # Compute rewards
                 rewards = []
                 for query_text, response_text in zip(batch_queries, batch_responses):
                     reward = self.compute_reward(query_text, response_text)
                     rewards.append(torch.tensor(reward))
 
-                # ---- Step 3: PPO update ----
+                # PPO update
                 stats = self.trainer.step(query_tensors, response_tensors, rewards)
                 all_stats.append(stats)
 
-                # Logging
                 if batch_idx % train_cfg.get("logging_steps", 5) == 0:
                     mean_reward = sum(r.item() for r in rewards) / len(rewards)
                     kl = stats.get("objective/kl", 0)
@@ -338,14 +416,25 @@ class PPOFineTuner:
                         f"Entropy: {stats.get('objective/entropy', 0):.4f}"
                     )
 
-                # Save checkpoint
                 if batch_idx > 0 and batch_idx % train_cfg.get("save_steps", 100) == 0:
                     save_path = os.path.join(train_cfg["output_dir"], f"checkpoint-{batch_idx}")
                     self.trainer.save_pretrained(save_path)
-                    logger.info(f"  Checkpoint saved: {save_path}")
 
         logger.info("\nPPO training complete!")
         return all_stats
+
+    # ----------------------------------------------------------
+    # Training (dispatch)
+    # ----------------------------------------------------------
+    def train(self):
+        """Run PPO/OnlineDPO training — auto-dispatches based on TRL version."""
+        if self.model is None:
+            self.setup_models()
+
+        if TRL_VERSION == "new":
+            return self._train_new_api()
+        else:
+            return self._train_legacy_api()
 
     # ----------------------------------------------------------
     # Save
@@ -355,7 +444,7 @@ class PPOFineTuner:
         output_dir = output_dir or os.path.join(self.config["training"]["output_dir"], "final")
         os.makedirs(output_dir, exist_ok=True)
 
-        self.trainer.save_pretrained(output_dir)
+        self.trainer.save_model(output_dir)
         self.tokenizer.save_pretrained(output_dir)
 
         with open(os.path.join(output_dir, "training_config.yaml"), "w") as f:

@@ -90,7 +90,7 @@ class SFTFineTuner:
             use_gradient_checkpointing=self.config["training"].get("gradient_checkpointing", True),
         )
 
-        # LoRA config
+        # LoRA config — SFTTrainer will apply PEFT internally
         self.peft_config = LoraConfig(
             r=qlora_cfg["lora_r"],
             lora_alpha=qlora_cfg["lora_alpha"],
@@ -100,10 +100,11 @@ class SFTFineTuner:
             task_type=TaskType.CAUSAL_LM,
         )
 
-        # Print trainable parameters
-        self.model = get_peft_model(self.model, self.peft_config)
-        trainable, total = self.model.get_nb_trainable_parameters()
-        logger.info(f"Trainable parameters: {trainable:,} / {total:,} ({trainable/total*100:.2f}%)")
+        # Note: do NOT call get_peft_model() here — SFTTrainer handles PEFT
+        # internally when peft_config is passed. Applying it twice causes errors.
+        total = sum(p.numel() for p in self.model.parameters())
+        logger.info(f"Base model parameters: {total:,}")
+        logger.info(f"LoRA rank={qlora_cfg['lora_r']}, alpha={qlora_cfg['lora_alpha']}")
 
         return self
 
@@ -186,9 +187,9 @@ class SFTFineTuner:
             load_best_model_at_end=True,
             metric_for_best_model="eval_loss",
             greater_is_better=False,
-            # Dataset
+            # Dataset — SFTTrainer handles tokenization from "text" column
             dataset_text_field="text",
-            packing=True,                 # pack multiple samples per sequence
+            packing=train_cfg.get("packing", False),
         )
 
         # Initialize trainer

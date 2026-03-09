@@ -240,12 +240,15 @@ class DPOFineTuner:
         )
 
         # Initialize DPO trainer
+        # Safe access — DatasetDict doesn't support .get()
+        eval_dataset = dataset["validation"] if "validation" in dataset else None
+
         self.trainer = DPOTrainer(
             model=self.model,
             ref_model=self.ref_model,
             args=training_args,
             train_dataset=dataset["train"],
-            eval_dataset=dataset.get("validation"),
+            eval_dataset=eval_dataset,
             tokenizer=self.tokenizer,
             peft_config=self.peft_config if not hasattr(self.model, "peft_config") else None,
         )

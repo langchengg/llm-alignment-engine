@@ -16,7 +16,7 @@ from typing import Optional
 
 import torch
 from datasets import load_dataset
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, pipeline
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, GenerationConfig, pipeline
 from peft import AutoPeftModelForCausalLM
 from tqdm import tqdm
 
@@ -74,7 +74,12 @@ class ModelEvaluator:
                 trust_remote_code=True,
                 torch_dtype=torch.bfloat16,
             )
-            self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+            # PEFT adapters may not include tokenizer; fall back to base model
+            try:
+                self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+            except OSError:
+                logger.info(f"Tokenizer not found at {model_path}, loading from base model")
+                self.tokenizer = AutoTokenizer.from_pretrained(self.config.base_model, trust_remote_code=True)
         else:
             self.model = AutoModelForCausalLM.from_pretrained(
                 model_path,
@@ -140,11 +145,16 @@ class ModelEvaluator:
             {"role": "user", "content": prompt},
         ]
 
+        gen_config = GenerationConfig(
+            max_new_tokens=self.config.max_new_tokens,
+            max_length=None,
+            temperature=self.config.temperature if self.config.temperature > 0 else 1.0,
+            do_sample=self.config.temperature > 0,
+        )
+
         output = self.pipe(
             messages,
-            max_new_tokens=self.config.max_new_tokens,
-            temperature=self.config.temperature,
-            do_sample=self.config.temperature > 0,
+            generation_config=gen_config,
             return_full_text=False,
         )
 

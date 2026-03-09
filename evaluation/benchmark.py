@@ -78,10 +78,12 @@ class PerformanceBenchmark:
                 trust_remote_code=True, torch_dtype=torch.bfloat16,
             )
 
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            model_path if not is_peft else self.config.base_model,
-            trust_remote_code=True,
-        )
+        # Always load tokenizer from base model (PEFT adapters may not include it)
+        tokenizer_path = self.config.base_model if is_peft else model_path
+        try:
+            self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, trust_remote_code=True)
+        except OSError:
+            self.tokenizer = AutoTokenizer.from_pretrained(self.config.base_model, trust_remote_code=True)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
