@@ -1,0 +1,56 @@
+# ============================================================
+# SFT (Supervised Fine-Tuning) Configuration
+# Model: Qwen/Qwen2.5-1.5B-Instruct
+# Target: Math reasoning domain
+# ============================================================
+
+model:
+  name_or_path: "Qwen/Qwen2.5-1.5B-Instruct"
+  torch_dtype: "bfloat16"
+  attn_implementation: "flash_attention_2"  # fallback to eager on Colab if unavailable
+
+# QLoRA Configuration
+qlora:
+  load_in_4bit: true
+  bnb_4bit_compute_dtype: "bfloat16"
+  bnb_4bit_quant_type: "nf4"
+  bnb_4bit_use_double_quant: true
+  lora_r: 64
+  lora_alpha: 128
+  lora_dropout: 0.05
+  target_modules:
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+
+# Training Configuration
+training:
+  output_dir: "./outputs/sft"
+  num_train_epochs: 3
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 8       # effective batch = 16
+  learning_rate: 2.0e-4
+  lr_scheduler_type: "cosine"
+  warmup_ratio: 0.1
+  weight_decay: 0.01
+  max_seq_length: 1024
+  logging_steps: 10
+  save_steps: 200
+  save_total_limit: 3
+  bf16: true
+  gradient_checkpointing: true
+  optim: "paged_adamw_32bit"
+  report_to: "wandb"
+
+# Dataset
+dataset:
+  name: "gsm8k"                        # HuggingFace dataset name
+  split: "train"
+  text_field: "question"
+
+# DeepSpeed
+deepspeed_config: "configs/deepspeed_zero2.json"

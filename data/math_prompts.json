@@ -1,0 +1,122 @@
+[
+    {
+        "id": "math_001",
+        "prompt": "Calculate 23 × 47 step by step.",
+        "category": "arithmetic",
+        "difficulty": "easy"
+    },
+    {
+        "id": "math_002",
+        "prompt": "A store sells notebooks for $3 each and pens for $1.50 each. If Sarah buys 4 notebooks and 6 pens, how much does she spend in total?",
+        "category": "word_problem",
+        "difficulty": "easy"
+    },
+    {
+        "id": "math_003",
+        "prompt": "If a train travels at 60 km/h for 2.5 hours, then at 80 km/h for 1.5 hours, what is the total distance traveled?",
+        "category": "word_problem",
+        "difficulty": "easy"
+    },
+    {
+        "id": "math_004",
+        "prompt": "Solve for x: 3x + 7 = 22",
+        "category": "algebra",
+        "difficulty": "easy"
+    },
+    {
+        "id": "math_005",
+        "prompt": "A rectangular garden has a perimeter of 56 meters. If the length is 3 times the width, find the dimensions of the garden.",
+        "category": "algebra",
+        "difficulty": "medium"
+    },
+    {
+        "id": "math_006",
+        "prompt": "Find the sum of all prime numbers less than 50.",
+        "category": "number_theory",
+        "difficulty": "medium"
+    },
+    {
+        "id": "math_007",
+        "prompt": "A jar contains 5 red balls, 3 blue balls, and 2 green balls. If you draw 2 balls without replacement, what is the probability that both are red?",
+        "category": "probability",
+        "difficulty": "medium"
+    },
+    {
+        "id": "math_008",
+        "prompt": "The sum of three consecutive even numbers is 78. What are the three numbers?",
+        "category": "algebra",
+        "difficulty": "easy"
+    },
+    {
+        "id": "math_009",
+        "prompt": "A circle has an area of 154 square centimeters. Find its circumference. (Use π ≈ 22/7)",
+        "category": "geometry",
+        "difficulty": "medium"
+    },
+    {
+        "id": "math_010",
+        "prompt": "If f(x) = 2x² - 3x + 1, find f(4) - f(2).",
+        "category": "algebra",
+        "difficulty": "medium"
+    },
+    {
+        "id": "math_011",
+        "prompt": "A company's revenue grew from $2 million to $3.2 million in one year. What is the percentage increase?",
+        "category": "word_problem",
+        "difficulty": "easy"
+    },
+    {
+        "id": "math_012",
+        "prompt": "Find the greatest common divisor (GCD) of 84 and 126. Show your work using the Euclidean algorithm.",
+        "category": "number_theory",
+        "difficulty": "medium"
+    },
+    {
+        "id": "math_013",
+        "prompt": "In how many ways can you arrange the letters in the word 'MATHEMATICS'?",
+        "category": "combinatorics",
+        "difficulty": "hard"
+    },
+    {
+        "id": "math_014",
+        "prompt": "A ball is dropped from a height of 10 meters. Each time it bounces, it reaches 3/4 of its previous height. What is the total distance traveled by the ball before it comes to rest?",
+        "category": "sequences",
+        "difficulty": "hard"
+    },
+    {
+        "id": "math_015",
+        "prompt": "Prove that the square root of 2 is irrational.",
+        "category": "proof",
+        "difficulty": "hard"
+    },
+    {
+        "id": "math_016",
+        "prompt": "A 5-meter ladder leans against a wall. The foot of the ladder is 3 meters from the wall. How high up the wall does the ladder reach?",
+        "category": "geometry",
+        "difficulty": "easy"
+    },
+    {
+        "id": "math_017",
+        "prompt": "Simplify: (2³ × 3²) / (2 × 3³)",
+        "category": "arithmetic",
+        "difficulty": "easy"
+    },
+    {
+        "id": "math_018",
+        "prompt": "Two pipes can fill a tank in 6 hours and 8 hours respectively. If both pipes are opened together, how long will it take to fill the tank?",
+        "category": "word_problem",
+        "difficulty": "medium"
+    },
+    {
+        "id": "math_019",
+        "prompt": "Find the derivative of f(x) = x³ - 6x² + 9x + 15.",
+        "category": "calculus",
+        "difficulty": "medium"
+    },
+    {
+        "id": "math_020",
+        "prompt": "What is the expected value of rolling two fair six-sided dice and summing the results?",
+        "category": "probability",
+        "difficulty": "medium"
+    }
+]
