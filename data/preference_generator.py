@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 
 import torch
 from datasets import Dataset
-from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig, pipeline
 from tqdm import tqdm
 
 logging.basicConfig(level=logging.INFO)
@@ -212,15 +212,19 @@ class PreferenceGenerator:
             return self._generate_via_api(messages)
 
         candidates = []
+        gen_config = GenerationConfig(
+            max_new_tokens=self.config.max_new_tokens,
+            max_length=None,  # avoid conflict with max_new_tokens
+            temperature=self.config.temperature,
+            top_p=self.config.top_p,
+            top_k=self.config.top_k,
+            do_sample=True,
+        )
         for _ in range(self.config.num_candidates):
             try:
                 output = self.generator(
                     messages,
-                    max_new_tokens=self.config.max_new_tokens,
-                    temperature=self.config.temperature,
-                    top_p=self.config.top_p,
-                    top_k=self.config.top_k,
-                    do_sample=True,
+                    generation_config=gen_config,
                     return_full_text=False,
                 )
                 response = output[0]["generated_text"]
@@ -285,11 +289,15 @@ class PreferenceGenerator:
             if self.config.use_api:
                 output_text = self._judge_via_api(judge_prompt)
             else:
-                output = self.judge(
-                    messages,
+                judge_gen_config = GenerationConfig(
                     max_new_tokens=100,
+                    max_length=None,
                     temperature=0.1,  # low temp for consistent scoring
                     do_sample=True,
+                )
+                output = self.judge(
+                    messages,
+                    generation_config=judge_gen_config,
                     return_full_text=False,
                 )
                 output_text = output[0]["generated_text"]
